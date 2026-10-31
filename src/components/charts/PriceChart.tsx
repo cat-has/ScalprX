@@ -1,18 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineSeries, LineStyle, createChart, type IChartApi, type IPriceLine, type ISeriesApi, type UTCTimestamp } from 'lightweight-charts'
-import type { Candle } from '../../types'
+import type { Candle, Timeframe } from '../../types'
 import type { IndicatorConfig } from '../../lib/settings'
 import { ema, macd, rsi } from '../../lib/indicators'
 import { fmtPrice } from '../../lib/format'
 
 export interface RefLines { entry?: number | null; stop?: number | null; takeProfit?: number | null }
-interface Props { candles: Candle[]; loading: boolean; error: string | null; ind: IndicatorConfig; lines?: RefLines; showRsi: boolean; showMacd: boolean; resetKey: string; theme: string; height?: 'sm' | 'lg' }
+interface Props { timeframe?: Timeframe; candles: Candle[]; loading: boolean; error: string | null; ind: IndicatorConfig; lines?: RefLines; showRsi: boolean; showMacd: boolean; resetKey: string; theme: string; height?: 'sm' | 'lg' }
 interface Inst { chart: IChartApi; candle: ISeriesApi<'Candlestick'>; vol: ISeriesApi<'Histogram'>; eF: ISeriesApi<'Line'>; eS: ISeriesApi<'Line'>; rsi?: ISeriesApi<'Line'>; mL?: ISeriesApi<'Line'>; mS?: ISeriesApi<'Line'>; mH?: ISeriesApi<'Histogram'> }
+const TF_SECONDS: Record<Timeframe, number> = { '1m': 60, '3m': 180, '5m': 300, '15m': 900, '1h': 3600 }
+export const timeframeToSeconds = (tf: Timeframe): number => TF_SECONDS[tf] ?? 60
+/** Seconds left until the current candle closes (candles are aligned to UTC epoch multiples of the interval). */
+export function secondsToClose(intervalSec: number, nowMs = Date.now()): number {
+  const nowSec = Math.floor(nowMs / 1000)
+  return intervalSec - (nowSec % intervalSec)
+}
+export function formatCountdown(sec: number): string {
+  const m = Math.floor(sec / 60)
+  return `${String(m).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
+}
+const BADGE = '#14b8a6'
 const cssv = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim()
 const ts = (ms: number) => Math.floor(ms / 1000) as UTCTimestamp
 function toLine(c: Candle[], vals: number[]) { return c.map((x, i) => ({ time: ts(x.t), value: vals[i] })).filter((p) => Number.isFinite(p.value)) }
 
-export function PriceChart({ candles, loading, error, ind, lines, showRsi, showMacd, resetKey, theme, height = 'lg' }: Props) {
+export function PriceChart({ timeframe, candles, loading, error, ind, lines, showRsi, showMacd, resetKey, theme, height = 'lg' }: Props) {
   const el = useRef<HTMLDivElement>(null)
   const [inst, setInst] = useState<Inst | null>(null)
   const [legend, setLegend] = useState<string | null>(null)
@@ -20,6 +32,14 @@ export function PriceChart({ candles, loading, error, ind, lines, showRsi, showM
   const seenKey = useRef('')
   const staleRef = useRef<Candle[] | null>(null)
   const priceLines = useRef<IPriceLine[]>([])
+  const badgeRef = useRef<HTMLDivElement>(null)
+  const priceTxt = useRef<HTMLDivElement>(null)
+  const cdTxt = useRef<HTMLDivElement>(null)
+  const candlesRef = useRef<Candle[]>([])
+  const layoutRef = useRef<(() => void) | null>(null)
+  // resetKey is "PAIR|TF" in every caller, so the timeframe can be derived when the prop is omitted.
+  const tf = (timeframe ?? (resetKey.split('|')[1] as Timeframe)) as Timeframe
+  const intervalSec = timeframeToSeconds(tf)
 
   useEffect(() => {
     if (!el.current) return
@@ -33,7 +53,7 @@ export function PriceChart({ candles, loading, error, ind, lines, showRsi, showM
       timeScale: { borderColor: grid, timeVisible: true, secondsVisible: false },
       localization: { priceFormatter: (p: number) => fmtPrice(p) },
     })
-    const candle = chart.addSeries(CandlestickSeries, { upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down, priceLineVisible: true }, 0)
+    const candle = chart.addSeries(CandlestickSeries, { upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down, priceLineVisible: true, priceLineColor: BADGE, lastValueVisible: false }, 0)
     candle.priceScale().applyOptions({ autoScale: true, scaleMargins: { top: 0.06, bottom: 0.24 } })
     const vol = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: '', lastValueVisible: false, priceLineVisible: false }, 0)
     vol.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
@@ -103,6 +123,47 @@ export function PriceChart({ candles, loading, error, ind, lines, showRsi, showM
     }
   }, [inst, candles, calc, resetKey])
 
+  // Live candle countdown badge: pinned to the price scale, updated imperatively (no React re-render per second).
+  useEffect(() => {
+    if (!inst) return
+    const el = badgeRef.current
+    const host = el?.parentElement
+    if (!el || !host) return
+    let lastPrice = '', lastCd = '', lastShow = ''
+    const layout = () => {
+      const cs = candlesRef.current
+      const last = cs[cs.length - 1]
+      const y = last ? inst.candle.priceToCoordinate(last.c) : null
+      if (!last || y == null) { if (lastShow !== 'none') { el.style.display = 'none'; lastShow = 'none' } return }
+      const maxTop = Math.max(0, host.clientHeight - inst.chart.timeScale().height() - 46)
+      const top = Math.min(maxTop, Math.max(0, Math.round(y) - 11))
+      const w = Math.max(inst.chart.priceScale('right').width(), 62)
+      if (lastShow !== 'block') { el.style.display = 'block'; lastShow = 'block' }
+      el.style.width = `${w}px`
+      el.style.transform = `translateY(${top}px)`
+      const price = fmtPrice(last.c)
+      if (price !== lastPrice && priceTxt.current) { priceTxt.current.textContent = price; lastPrice = price }
+      // Candle data older than two intervals means the feed is stale: do not pretend the timer is meaningful.
+      const fresh = Date.now() - last.t < intervalSec * 2000
+      const cd = fresh ? formatCountdown(secondsToClose(intervalSec)) : '--:--'
+      if (cd !== lastCd && cdTxt.current) { cdTxt.current.textContent = cd; lastCd = cd }
+    }
+    layoutRef.current = layout
+    inst.chart.timeScale().subscribeVisibleLogicalRangeChange(layout)
+    const ro = new ResizeObserver(layout)
+    ro.observe(host)
+    let timer: ReturnType<typeof setTimeout>
+    const loop = () => { layout(); timer = setTimeout(loop, 1000 - (Date.now() % 1000) + 5) } // tick on the second boundary
+    loop()
+    return () => { clearTimeout(timer); ro.disconnect(); inst.chart.timeScale().unsubscribeVisibleLogicalRangeChange(layout); layoutRef.current = null }
+  }, [inst, intervalSec])
+
+  useEffect(() => {
+    candlesRef.current = candles
+    const id = requestAnimationFrame(() => layoutRef.current?.())
+    return () => cancelAnimationFrame(id)
+  }, [inst, candles, resetKey])
+
   useEffect(() => {
     if (!inst) return
     priceLines.current.forEach((l) => inst.candle.removePriceLine(l))
@@ -116,6 +177,10 @@ export function PriceChart({ candles, loading, error, ind, lines, showRsi, showM
   return (
     <div className={`chartbox ${height === 'sm' ? 'sm' : ''}`}>
       <div className="chart-el" ref={el} role="img" aria-label="Candlestick chart with volume and indicator overlays" />
+      <div ref={badgeRef} aria-hidden="true" style={{ position: 'absolute', top: 0, right: 0, display: 'none', zIndex: 3, pointerEvents: 'none', textAlign: 'center', fontFamily: 'var(--mono)', fontVariantNumeric: 'tabular-nums', willChange: 'transform' }}>
+        <div ref={priceTxt} style={{ background: BADGE, color: '#031a17', fontWeight: 700, fontSize: 12, lineHeight: '22px', height: 22, borderRadius: '4px 4px 0 0', whiteSpace: 'nowrap' }} />
+        <div ref={cdTxt} style={{ background: 'var(--surface2)', color: BADGE, border: `1px solid ${BADGE}`, borderTop: 0, fontWeight: 600, fontSize: 11.5, lineHeight: '19px', height: 21, borderRadius: '0 0 4px 4px', boxSizing: 'border-box' }} />
+      </div>
       {legend && <div className="legend">{legend}</div>}
       {loading && !candles.length && <div className="chart-msg"><div><div className="skeleton" style={{ width: 160, margin: '0 auto 8px' }} />Loading candles from the exchange...</div></div>}
       {!loading && !candles.length && <div className="chart-msg"><div><strong>No chart data</strong><p>{error ?? 'Candles are unavailable for this pair and timeframe.'}</p><p className="faint">ScalprX never shows made-up candles. Retry when your connection or the exchange API is available.</p></div></div>}
