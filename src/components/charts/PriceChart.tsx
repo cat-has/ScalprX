@@ -17,6 +17,8 @@ export function PriceChart({ candles, loading, error, ind, lines, showRsi, showM
   const [inst, setInst] = useState<Inst | null>(null)
   const [legend, setLegend] = useState<string | null>(null)
   const fitted = useRef('')
+  const seenKey = useRef('')
+  const staleRef = useRef<Candle[] | null>(null)
   const priceLines = useRef<IPriceLine[]>([])
 
   useEffect(() => {
@@ -32,8 +34,9 @@ export function PriceChart({ candles, loading, error, ind, lines, showRsi, showM
       localization: { priceFormatter: (p: number) => fmtPrice(p) },
     })
     const candle = chart.addSeries(CandlestickSeries, { upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down, priceLineVisible: true }, 0)
-    const vol = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'vol', lastValueVisible: false, priceLineVisible: false }, 0)
-    chart.priceScale('vol', 0).applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
+    candle.priceScale().applyOptions({ autoScale: true, scaleMargins: { top: 0.06, bottom: 0.24 } })
+    const vol = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: '', lastValueVisible: false, priceLineVisible: false }, 0)
+    vol.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
     const eF = chart.addSeries(LineSeries, { color: accent, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: `EMA${ind.emaFast}` }, 0)
     const eS = chart.addSeries(LineSeries, { color: warn, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: `EMA${ind.emaSlow}` }, 0)
     let pane = 1
@@ -56,6 +59,7 @@ export function PriceChart({ candles, loading, error, ind, lines, showRsi, showM
       setLegend(d ? `O ${fmtPrice(d.open)}  H ${fmtPrice(d.high)}  L ${fmtPrice(d.low)}  C ${fmtPrice(d.close)}` : null)
     })
     fitted.current = ''
+    seenKey.current = ''
     setInst(i)
     return () => { chart.remove(); setInst(null); priceLines.current = [] }
   }, [theme, showRsi, showMacd, ind.emaFast, ind.emaSlow, ind.rsi])
@@ -67,6 +71,21 @@ export function PriceChart({ candles, loading, error, ind, lines, showRsi, showM
 
   useEffect(() => {
     if (!inst) return
+    const clearAll = () => {
+      inst.candle.setData([]); inst.vol.setData([]); inst.eF.setData([]); inst.eS.setData([])
+      inst.rsi?.setData([]); inst.mL?.setData([]); inst.mS?.setData([]); inst.mH?.setData([])
+    }
+    // Pair/timeframe changed: drop every series and re-enable auto-scaling so the axis can adapt to the new asset.
+    if (seenKey.current !== resetKey) {
+      seenKey.current = resetKey
+      staleRef.current = candles // whatever is present at this moment still belongs to the previous pair
+      fitted.current = ''
+      clearAll()
+      inst.chart.priceScale('right').applyOptions({ autoScale: true })
+      inst.candle.priceScale().applyOptions({ autoScale: true })
+    }
+    // Ignore the leftover candles of the previous pair; wait for the new dataset.
+    if (!candles.length || candles === staleRef.current) return
     const up = cssv('--up'), down = cssv('--down')
     inst.candle.setData(candles.map((c) => ({ time: ts(c.t), open: c.o, high: c.h, low: c.l, close: c.c })))
     inst.vol.setData(candles.map((c) => ({ time: ts(c.t), value: c.v, color: c.c >= c.o ? `${up}55` : `${down}55` })))
@@ -76,7 +95,12 @@ export function PriceChart({ candles, loading, error, ind, lines, showRsi, showM
     inst.mL?.setData(toLine(candles, calc.m.macd))
     inst.mS?.setData(toLine(candles, calc.m.signal))
     inst.mH?.setData(candles.map((c, k) => ({ time: ts(c.t), value: calc.m.hist[k] })).filter((p) => Number.isFinite(p.value)).map((p) => ({ ...p, color: p.value >= 0 ? `${up}99` : `${down}99` })))
-    if (candles.length && fitted.current !== resetKey) { inst.chart.timeScale().fitContent(); inst.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candles.length - 120), to: candles.length + 5 }); fitted.current = resetKey }
+    if (fitted.current !== resetKey) {
+      inst.chart.priceScale('right').applyOptions({ autoScale: true })
+      inst.chart.timeScale().fitContent()
+      inst.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, candles.length - 120), to: candles.length + 5 })
+      fitted.current = resetKey
+    }
   }, [inst, candles, calc, resetKey])
 
   useEffect(() => {
