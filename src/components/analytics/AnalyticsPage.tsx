@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
-import { useApp } from '../../app/store'
-import { Card, Empty, Stat } from '../ui'
+import { useApp, useData } from '../../app/store'
+import { useToast } from '../../app/toast'
+import { Card, DemoBanner, Empty, SampleButton, Stat } from '../ui'
 import { byPair, bySession, bySetup, byTimeframe, closedResults, computeMetrics, equityCurve, type GroupRow, type Metrics } from '../../lib/metrics'
 import { fmtMoney, fmtNum, fmtPct, fmtR, dayKey } from '../../lib/format'
 import { go } from '../../app/router'
@@ -33,9 +34,25 @@ function Breakdown({ title, rows, cur }: { title: string; rows: GroupRow[]; cur:
     </Card>
   )
 }
+function RHistogram({ rs }: { rs: number[] }) {
+  const bins = [
+    { label: '< -2R', test: (r: number) => r < -2, tone: 'down' }, { label: '-2 to -1', test: (r: number) => r >= -2 && r < -1, tone: 'down' },
+    { label: '-1 to 0', test: (r: number) => r >= -1 && r < 0, tone: 'down' }, { label: '0 to 1', test: (r: number) => r >= 0 && r < 1, tone: 'up' },
+    { label: '1 to 2', test: (r: number) => r >= 1 && r < 2, tone: 'up' }, { label: '2 to 3', test: (r: number) => r >= 2 && r < 3, tone: 'up' }, { label: '3R+', test: (r: number) => r >= 3, tone: 'up' },
+  ].map((b) => ({ ...b, n: rs.filter(b.test).length }))
+  const max = Math.max(1, ...bins.map((b) => b.n))
+  if (!rs.length) return <p className="faint">No R-multiples yet.</p>
+  return (
+    <div className="hist" role="img" aria-label={`R-multiple distribution: ${bins.map((b) => `${b.label} ${b.n}`).join(', ')}`}>
+      {bins.map((b) => <div className="col" key={b.label}><span className="num" style={{ fontSize: 11 }}>{b.n}</span><div className="bar" style={{ height: `${(b.n / max) * 100}%`, background: b.tone === 'up' ? 'var(--up)' : 'var(--down)', opacity: 0.85 }} /><span className="lab">{b.label}</span></div>)}
+    </div>
+  )
+}
 const pf = (m: Metrics) => (m.profitFactorInfinite ? 'Infinite' : m.profitFactor != null ? m.profitFactor.toFixed(2) : '-')
 export function AnalyticsPage() {
-  const { trades, settings } = useApp()
+  const { settings, setDemo } = useApp()
+  const { trades, demo } = useData()
+  const toast = useToast()
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const cur = settings.currency
@@ -46,7 +63,8 @@ export function AnalyticsPage() {
     <div className="page">
       <div className="page-head"><div><h1>Performance analytics</h1><p>Computed only from the closed trades you recorded. Nothing is simulated.</p></div>
         <div className="row"><label className="lbl" htmlFor="a-f">From</label><input id="a-f" type="date" value={from} onChange={(e) => setFrom(e.target.value)} style={{ width: 150 }} /><label className="lbl" htmlFor="a-t">To</label><input id="a-t" type="date" value={to} onChange={(e) => setTo(e.target.value)} style={{ width: 150 }} /></div></div>
-      {!m.total ? <Card><Empty title="No closed trades to analyse" action={<button className="btn primary" onClick={() => go('/journal/new')}>Record a trade</button>}>Analytics appear once you have closed trades in the journal.</Empty></Card> : (
+      {demo && <DemoBanner onExit={() => setDemo(false)} />}
+      {!m.total ? <Card><Empty title="No closed trades to analyse" action={<div className="row" style={{ justifyContent: 'center' }}><button className="btn primary" onClick={() => go('/journal/new')}>Record a trade</button><SampleButton onClick={() => { setDemo(true); toast('Showing sample data. Nothing is saved.', 'info') }} /></div>}>Analytics appear once you have closed trades in the journal.</Empty></Card> : (
         <>
           <div className="grid g4">
             <Stat label="Total trades" value={m.total} sub={`${m.wins} wins, ${m.losses} losses, ${m.breakeven} flat`} />
@@ -58,7 +76,7 @@ export function AnalyticsPage() {
             <Stat label="Average win / loss" value={<span style={{ fontSize: 16 }}>{fmtNum(m.avgWin)} / {fmtNum(m.avgLoss)}</span>} />
             <Stat label="Max drawdown" value={`${fmtNum(m.maxDrawdown)} ${cur}`} tone={m.maxDrawdown > 0 ? 'down' : undefined} sub="Peak-to-trough of cumulative net P&L" />
           </div>
-          <Card title="Equity curve (cumulative net P&L)"><EquityChart points={curve} /></Card>
+          <div className="grid g2"><Card title="Equity curve (cumulative net P&L)"><EquityChart points={curve} /></Card><Card title="R-multiple distribution"><RHistogram rs={results.map((r) => r.r).filter((x): x is number => x != null)} /></Card></div>
           <div className="grid g2"><Breakdown title="By pair" rows={byPair(results)} cur={cur} /><Breakdown title="By timeframe" rows={byTimeframe(results)} cur={cur} /><Breakdown title="By setup" rows={bySetup(results)} cur={cur} /><Breakdown title="By session (UTC)" rows={bySession(results)} cur={cur} /></div>
         </>
       )}

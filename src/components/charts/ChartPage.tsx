@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Plus, RefreshCw } from 'lucide-react'
 import { useApp } from '../../app/store'
 import { useCandles } from '../../hooks/useCandles'
@@ -8,7 +8,8 @@ import { TIMEFRAMES, type Timeframe } from '../../types'
 import { PairPicker } from '../markets/PairPicker'
 import { prettyPair, fmtPrice, fmtPct, fmtAge } from '../../lib/format'
 import { go } from '../../app/router'
-import { writeJson } from '../../hooks/useLocalStorage'
+import { readJson, writeJson } from '../../hooks/useLocalStorage'
+import { useToast } from '../../app/toast'
 import { useNow } from '../../hooks/useNow'
 
 export function ChartPage() {
@@ -16,9 +17,13 @@ export function ChartPage() {
   const [rsiOn, setRsiOn] = useState(true)
   const [macdOn, setMacdOn] = useState(false)
   const [picker, setPicker] = useState(false)
-  const [entry, setEntry] = useState('')
-  const [stop, setStop] = useState('')
-  const [tp, setTp] = useState('')
+  const [pre] = useState(() => readJson<{ pair?: string; entry?: number | null; stop?: number | null; takeProfit?: number | null } | null>('scalprx.chartlines', null))
+  useEffect(() => { if (pre) localStorage.removeItem('scalprx.chartlines') }, [pre])
+  const fmtIn = (v?: number | null) => (v != null && Number.isFinite(v) ? String(+v.toPrecision(8)) : '')
+  const [entry, setEntry] = useState(fmtIn(pre?.entry))
+  const [stop, setStop] = useState(fmtIn(pre?.stop))
+  const [tp, setTp] = useState(fmtIn(pre?.takeProfit))
+  const toast = useToast()
   const now = useNow(5000)
   const pair = settings.chartPair
   const tf = settings.chartTimeframe
@@ -53,8 +58,8 @@ export function ChartPage() {
           <Field label="Take-profit" id="c-tp"><input id="c-tp" inputMode="decimal" value={tp} onChange={(e) => setTp(e.target.value)} /></Field>
         </div>
         <div className="row" style={{ marginTop: 12 }}>
-          <button className="btn primary" disabled={!n(entry) || !n(stop)} onClick={() => { const e = n(entry)!, s = n(stop)!; writeJson('scalprx.prefill', { pair, direction: s < e ? 'long' : 'short', entry: e, stop: s, takeProfit: n(tp) }); go('/risk') }}>Size this trade</button>
-          <span className="faint">Lines are visual aids only. Zoom with the wheel or pinch, drag to pan, hover for OHLC.</span>
+          <button className="btn primary" disabled={!(n(entry) || t?.price) || !n(stop)} onClick={() => { const e = n(entry) || t!.price, s = n(stop)!; if (s === e) { toast('Stop-loss cannot equal the entry.', 'error'); return } writeJson('scalprx.prefill', { pair, direction: s < e ? 'long' : 'short', entry: e, stop: s, takeProfit: n(tp), timeframe: tf, from: 'Chart' }); toast('Levels sent to the risk calculator.', 'info'); go('/risk') }}>Size this trade</button>
+          <span className="faint">Empty entry uses the live price. Lines are visual aids only; zoom with the wheel or pinch, drag to pan.</span>
         </div>
       </Card>
       {picker && <PairPicker exclude={[]} onPick={(s) => setSettings({ chartPair: s })} onClose={() => setPicker(false)} />}

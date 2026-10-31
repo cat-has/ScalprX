@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useApp } from '../../app/store'
+import { useToast } from '../../app/toast'
 import { Banner, Card, Field, Seg } from '../../components/ui'
 import { db } from '../../services/storage/db'
 import { fmtNum, fromLocalInput, toLocalInput, uid } from '../../lib/format'
@@ -19,6 +20,7 @@ export function TradeEditor({ id }: { id?: string }) {
 function EditorForm({ existing, fee }: { existing?: Trade; fee: number }) {
   const draft = useMemo(() => (existing ? null : readJson<Draft | null>('scalprx.tradedraft', null)), [existing])
   const { settings } = useApp()
+  const toast = useToast()
   const [pair, setPair] = useState(existing?.pair ?? draft?.pair ?? settings.chartPair)
   const [dir, setDir] = useState<Direction>(existing?.direction ?? draft?.direction ?? 'long')
   const [entry, setEntry] = useState(String(existing?.entry ?? (draft?.entry ? +draft.entry.toPrecision(8) : '')))
@@ -66,6 +68,7 @@ function EditorForm({ existing, fee }: { existing?: Trade; fee: number }) {
     const t: Trade = { id: existing?.id ?? uid(), pair: pair.trim().toUpperCase().replace('/', ''), direction: dir, entry: E, exit: X, stop: S, takeProfit: T, size: Z, fees: F, openedAt: o as number, closedAt: c, setup: setup.trim(), timeframe: tf, rationale: why, emotion, executionQuality: quality, mistakes, preNotes: pre, postNotes: post, createdAt: existing?.createdAt ?? Date.now() }
     await db.trades.put(t)
     localStorage.removeItem('scalprx.tradedraft')
+    toast(existing ? 'Trade updated.' : 'Trade logged.')
     go(`/journal/${t.id}`)
   }
   return (

@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { useApp } from '../../app/store'
+import { useApp, useData } from '../../app/store'
+import { useToast } from '../../app/toast'
 import { Banner, Card, Confirm, Stat } from '../../components/ui'
 import { resultOf } from '../../lib/metrics'
 import { fmtMoney, fmtNum, fmtR, fmtTime, prettyPair } from '../../lib/format'
@@ -8,7 +9,9 @@ import { db } from '../../services/storage/db'
 import { sessionOf } from '../../lib/session'
 
 export function TradeDetail({ id }: { id: string }) {
-  const { trades, settings } = useApp()
+  const { settings } = useApp()
+  const { trades, demo } = useData()
+  const toast = useToast()
   const [del, setDel] = useState(false)
   const t = trades.find((x) => x.id === id)
   if (!t) return <div className="page"><Banner tone="warn"><span>Trade not found. <Link to="/journal">Back to journal</Link></span></Banner></div>
@@ -19,8 +22,8 @@ export function TradeDetail({ id }: { id: string }) {
   return (
     <div className="page">
       <div className="page-head">
-        <div><h1>{prettyPair(t.pair)} <span className={`chip ${t.direction === 'long' ? 'up' : 'down'}`}>{t.direction}</span> {!r && <span className="chip warn">open</span>}</h1><p>Opened {fmtTime(t.openedAt)}{t.closedAt ? `, closed ${fmtTime(t.closedAt)}` : ''} - {sessionOf(t.openedAt)} session</p></div>
-        <div className="row"><Link to="/journal" className="btn">Back</Link><Link to={`/journal/${t.id}/edit`} className="btn">Edit</Link><button className="btn danger" onClick={() => setDel(true)}>Delete</button></div>
+        <div><h1>{prettyPair(t.pair)} <span className={`badge ${t.direction}`}>{t.direction}</span> {!r && <span className="badge open">open</span>} {demo && <span className="badge demo">sample</span>}</h1><p>Opened {fmtTime(t.openedAt)}{t.closedAt ? `, closed ${fmtTime(t.closedAt)}` : ''} - {sessionOf(t.openedAt)} session</p></div>
+        <div className="row"><Link to="/journal" className="btn">Back</Link>{!demo && <><Link to={`/journal/${t.id}/edit`} className="btn">Edit</Link><button className="btn danger" onClick={() => setDel(true)}>Delete</button></>}</div>
       </div>
       <div className="grid g4">
         <Stat label="Net P&L" value={r ? fmtMoney(r.net, cur) : '-'} tone={r ? (r.net >= 0 ? 'up' : 'down') : undefined} sub={r ? `Gross ${fmtNum(r.gross)} minus fees ${fmtNum(t.fees)}` : 'Trade still open'} />
@@ -41,7 +44,7 @@ export function TradeDetail({ id }: { id: string }) {
         <Card title="Before the trade"><p style={{ whiteSpace: 'pre-wrap' }}>{t.preNotes || <span className="faint">Nothing recorded.</span>}</p></Card>
         <Card title="After the trade"><p style={{ whiteSpace: 'pre-wrap' }}>{t.postNotes || <span className="faint">Nothing recorded.</span>}</p></Card>
       </div>
-      {del && <Confirm title="Delete this trade?" confirmLabel="Delete trade" message={<p>This permanently removes the trade from this browser.</p>} onCancel={() => setDel(false)} onConfirm={() => { void db.trades.delete(t.id); go('/journal') }} />}
+      {del && <Confirm title="Delete this trade?" confirmLabel="Delete trade" message={<p>This permanently removes the trade from this browser.</p>} onCancel={() => setDel(false)} onConfirm={() => { void db.trades.delete(t.id); toast('Trade deleted.'); go('/journal') }} />}
     </div>
   )
 }

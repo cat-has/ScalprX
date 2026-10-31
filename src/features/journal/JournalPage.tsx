@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from 'react'
 import { Download, Plus, Search, Upload } from 'lucide-react'
-import { useApp } from '../../app/store'
-import { Banner, Card, Confirm, Empty, Stat } from '../../components/ui'
+import { useApp, useData } from '../../app/store'
+import { useToast } from '../../app/toast'
+import { Banner, Card, Confirm, DemoBanner, Empty, SampleButton, Stat } from '../../components/ui'
 import { closedResults, computeMetrics, resultOf } from '../../lib/metrics'
 import { csvToTrades, tradesToCsv } from '../../lib/csv'
 import { db } from '../../services/storage/db'
@@ -17,7 +18,9 @@ export function download(name: string, text: string, mime = 'text/csv') {
 }
 
 export function JournalPage() {
-  const { trades, settings } = useApp()
+  const { settings, setDemo } = useApp()
+  const { trades, demo } = useData()
+  const toast = useToast()
   const [q, setQ] = useState('')
   const [pair, setPair] = useState('')
   const [dir, setDir] = useState('')
@@ -46,10 +49,12 @@ export function JournalPage() {
   const m = computeMetrics(closedResults(filtered))
   const onImport = async (f: File | undefined) => {
     if (!f) return
-    if (f.size > 5_000_000) { setMsg({ tone: 'down', text: 'File is larger than 5 MB.' }); return }
+    if (demo) return
+    if (f.size > 5_000_000) { setMsg({ tone: 'down', text: 'File is larger than 5 MB.' }); toast('Import failed: file is larger than 5 MB.', 'error'); return }
     const text = await f.text()
     const r = csvToTrades(text, new Set(trades.map((t) => t.id)))
     if (r.trades.length) await db.trades.bulkPut(r.trades)
+    toast(`Imported ${r.trades.length} trade(s)${r.errors.length ? `, ${r.errors.length} rejected` : ''}.`, r.trades.length ? 'success' : 'error')
     setMsg({ tone: r.errors.length ? 'warn' : 'info', text: `Imported ${r.trades.length} trade(s). Skipped ${r.skipped} duplicate(s). ${r.errors.length} row(s) rejected.`, errors: r.errors.slice(0, 12) })
     if (file.current) file.current.value = ''
   }
@@ -59,11 +64,12 @@ export function JournalPage() {
         <div><h1>Trade journal</h1><p>Record what you planned, what happened and what you learned. Stored only in this browser.</p></div>
         <div className="row">
           <input ref={file} type="file" accept=".csv,text/csv" hidden aria-label="Import CSV file" onChange={(e) => void onImport(e.target.files?.[0])} />
-          <button className="btn" onClick={() => file.current?.click()}><Upload size={16} /> Import CSV</button>
-          <button className="btn" disabled={!trades.length} onClick={() => download(`scalprx-journal-${dayKey(Date.now())}.csv`, tradesToCsv(trades))}><Download size={16} /> Export CSV</button>
-          <button className="btn primary" onClick={() => go('/journal/new')}><Plus size={16} /> New trade</button>
+          <button className="btn" disabled={demo} onClick={() => file.current?.click()}><Upload size={16} /> Import CSV</button>
+          <button className="btn" disabled={!trades.length || demo} onClick={() => { download(`scalprx-journal-${dayKey(Date.now())}.csv`, tradesToCsv(trades)); toast(`Exported ${trades.length} trades to CSV.`) }}><Download size={16} /> Export CSV</button>
+          <button className="btn primary" disabled={demo} onClick={() => go('/journal/new')}><Plus size={16} /> New trade</button>
         </div>
       </div>
+      {demo && <DemoBanner onExit={() => setDemo(false)} />}
       {msg && <Banner tone={msg.tone}><div style={{ flex: 1 }}>{msg.text}{msg.errors && msg.errors.length > 0 && <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{msg.errors.map((e) => <li key={e}>{e}</li>)}</ul>}</div><button className="btn sm" onClick={() => setMsg(null)}>Dismiss</button></Banner>}
       <div className="grid g4">
         <Stat label="Trades (closed)" value={m.total} sub={`${filtered.length - m.total} open or filtered`} />
@@ -82,7 +88,7 @@ export function JournalPage() {
             <div className="field"><label htmlFor="j-t">To</label><input id="j-t" type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
           </div>
         </div>
-        {!trades.length ? <Empty title="Your journal is empty" action={<button className="btn primary" onClick={() => go('/journal/new')}>Record your first trade</button>}>Trades you record here stay on this device. Nothing is pre-filled or simulated.</Empty>
+        {!trades.length ? <Empty title="Your journal is empty" action={<div className="row" style={{ justifyContent: 'center' }}><button className="btn primary" onClick={() => go('/journal/new')}>Record your first trade</button><SampleButton onClick={() => { setDemo(true); toast('Showing sample data. Nothing is saved.', 'info') }} /></div>}>Trades you record here stay on this device. Nothing is pre-filled or simulated.</Empty>
           : !filtered.length ? <Empty title="No trades match these filters" />
           : (
             <div className="tablewrap"><table>
@@ -92,18 +98,18 @@ export function JournalPage() {
                 return (
                   <tr key={t.id}>
                     <td>{fmtTime(t.openedAt)}</td><td><Link to={`/journal/${t.id}`} style={{ fontWeight: 600 }}>{prettyPair(t.pair)}</Link></td>
-                    <td><span className={`chip ${t.direction === 'long' ? 'up' : 'down'}`}>{t.direction}</span></td>
-                    <td className="r num">{t.entry}</td><td className="r num">{t.exit ?? <span className="chip warn">open</span>}</td>
+                    <td><span className={`badge ${t.direction}`}>{t.direction}</span></td>
+                    <td className="r num">{t.entry}</td><td className="r num">{t.exit ?? <span className="badge open">open</span>}</td>
                     <td className={`r num ${r ? (r.net >= 0 ? 'up' : 'down') : ''}`}>{r ? fmtMoney(r.net, '').trim() : '-'}</td>
                     <td className={`r num ${r?.r != null ? (r.r >= 0 ? 'up' : 'down') : ''}`}>{r?.r != null ? fmtR(r.r) : '-'}</td>
                     <td>{t.setup || '-'}</td>
-                    <td><div className="row" style={{ flexWrap: 'nowrap' }}><Link to={`/journal/${t.id}/edit`} className="btn sm">Edit</Link><button className="btn sm danger" onClick={() => setDel(t)}>Delete</button></div></td>
+                    <td><div className="row" style={{ flexWrap: 'nowrap' }}>{!demo && <><Link to={`/journal/${t.id}/edit`} className="btn sm">Edit</Link><button className="btn sm danger" onClick={() => setDel(t)}>Delete</button></>}</div></td>
                   </tr>
                 )
               })}</tbody></table></div>
           )}
       </Card>
-      {del && <Confirm title="Delete this trade?" confirmLabel="Delete trade" message={<p>{prettyPair(del.pair)} {del.direction} opened {fmtTime(del.openedAt)} will be permanently removed from this browser. Export a backup first if unsure.</p>} onCancel={() => setDel(null)} onConfirm={() => { void db.trades.delete(del.id); setDel(null) }} />}
+      {del && <Confirm title="Delete this trade?" confirmLabel="Delete trade" message={<p>{prettyPair(del.pair)} {del.direction} opened {fmtTime(del.openedAt)} will be permanently removed from this browser. Export a backup first if unsure.</p>} onCancel={() => setDel(null)} onConfirm={() => { void db.trades.delete(del.id); setDel(null); toast('Trade deleted.') }} />}
     </div>
   )
 }

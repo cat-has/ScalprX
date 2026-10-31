@@ -8,6 +8,7 @@ import { describeError, fetchCandles, fetchTickers } from '../services/market-da
 import { evaluateAlert } from '../lib/alerts'
 import { rsi, last } from '../lib/indicators'
 import { uid } from '../lib/format'
+import { makeDemoAlerts, makeDemoTrades } from '../lib/demo'
 import { showBrowserNotification } from '../services/notifications/browser'
 
 export type FeedStatus = 'loading' | 'live' | 'stale' | 'cached' | 'offline' | 'rate_limited' | 'error'
@@ -24,6 +25,9 @@ interface Ctx {
   alerts: Alert[]
   notifications: AppNotification[]
   tickerOf: (symbol: string) => Ticker | undefined
+  demo: boolean
+  setDemo: (on: boolean) => void
+  sample: { trades: Trade[]; alerts: Alert[]; notifications: AppNotification[] }
 }
 const AppCtx = createContext<Ctx | null>(null)
 export const useApp = (): Ctx => {
@@ -148,7 +152,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     })()
   }, [feed.updatedAt, feed.status, feed.tickers])
 
+  const [demo, setDemoState] = useState<boolean>(() => sessionStorage.getItem('scalprx.demo') === '1')
+  const setDemo = useCallback((on: boolean) => { setDemoState(on); try { if (on) sessionStorage.setItem('scalprx.demo', '1'); else sessionStorage.removeItem('scalprx.demo') } catch { /* ignore */ } }, [])
+  const sample = useMemo(() => { const a = makeDemoAlerts(); return { trades: makeDemoTrades(), alerts: a.alerts, notifications: a.notifications } }, [])
   const tickerOf = useCallback((s: string) => feed.tickers.find((t) => t.symbol === s), [feed.tickers])
-  const value = useMemo<Ctx>(() => ({ settings, setSettings, watchlist, setWatchlist, feed, refresh: () => void poll(), trades, alerts, notifications, tickerOf }), [settings, setSettings, watchlist, setWatchlist, feed, poll, trades, alerts, notifications, tickerOf])
+  const value = useMemo<Ctx>(() => ({ settings, setSettings, watchlist, setWatchlist, feed, refresh: () => void poll(), trades, alerts, notifications, tickerOf, demo, setDemo, sample }), [settings, setSettings, watchlist, setWatchlist, feed, poll, trades, alerts, notifications, tickerOf, demo, setDemo, sample])
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>
+}
+
+/** Journal-facing data. In sample-preview mode returns clearly separate sample records (read-only, never saved). */
+export function useData() {
+  const a = useApp()
+  return a.demo
+    ? { demo: true as const, trades: a.sample.trades, alerts: a.sample.alerts, notifications: a.sample.notifications }
+    : { demo: false as const, trades: a.trades, alerts: a.alerts, notifications: a.notifications }
 }

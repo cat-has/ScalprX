@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Plus, RefreshCw } from 'lucide-react'
 import { useApp } from '../../app/store'
+import { useToast } from '../../app/toast'
 import { MarketTable } from './MarketTable'
 import { PairPicker } from './PairPicker'
 import { Card, Stat } from '../ui'
@@ -14,6 +15,7 @@ export function MarketsPage() {
   const { feed, watchlist, setWatchlist, settings, setSettings, refresh, tickerOf } = useApp()
   const [favs, setFavs] = useLocalStorage<string[]>('scalprx.favorites.v1', [])
   const [picker, setPicker] = useState(false)
+  const toast = useToast()
   const sel = tickerOf(settings.chartPair)
   return (
     <div className="page">
@@ -26,7 +28,7 @@ export function MarketsPage() {
         <MarketTable tickers={feed.tickers} symbols={watchlist} selected={settings.chartPair} loading={feed.status === 'loading'} favorites={favs}
           onFav={(s) => setFavs((f) => (f.includes(s) ? f.filter((x) => x !== s) : [...f, s]))}
           onSelect={(s) => { setSettings({ chartPair: s }); go('/chart') }}
-          onRemove={(s) => setWatchlist(watchlist.filter((x) => x !== s))} />
+          onRemove={(s) => { setWatchlist(watchlist.filter((x) => x !== s)); toast(`${prettyPair(s)} removed from watchlist.`, 'info') }} />
       </Card>
       {sel && (
         <Card title={`${prettyPair(settings.chartPair)} detail`}>
@@ -40,7 +42,7 @@ export function MarketsPage() {
         </Card>
       )}
       <div className="row"><button className="btn sm ghost" onClick={() => setWatchlist(DEFAULT_PAIRS)}>Reset watchlist to defaults</button></div>
-      {picker && <PairPicker exclude={watchlist} onPick={(s) => setWatchlist([...watchlist, s])} onClose={() => setPicker(false)} />}
+      {picker && <PairPicker exclude={watchlist} onPick={(s) => { setWatchlist([...watchlist, s]); toast(`${prettyPair(s)} added to watchlist.`) }} onClose={() => setPicker(false)} />}
     </div>
   )
 }

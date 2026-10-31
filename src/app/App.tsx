@@ -20,6 +20,7 @@ import { HelpPage } from '../features/settings/HelpPage'
 import { Onboarding } from '../features/settings/Onboarding'
 import { Empty } from '../components/ui'
 import { registerPwa } from './pwa'
+import { ToastProvider } from './toast'
 
 function Routes() {
   const path = usePath()
@@ -53,10 +54,12 @@ export default function App() {
   useEffect(() => { if (!window.location.hash) window.location.hash = '/dashboard' }, [])
   return (
     <AppProvider>
+     <ToastProvider>
       <Shell updateReady={updateReady} applyUpdate={apply}>
         <ErrorBoundary resetKey={path}><Routes /></ErrorBoundary>
       </Shell>
       <Onboarding />
+     </ToastProvider>
     </AppProvider>
   )
 }

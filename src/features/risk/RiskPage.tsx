@@ -9,10 +9,10 @@ import { readJson } from '../../hooks/useLocalStorage'
 import { go } from '../../app/router'
 
 const PRESETS = [0.25, 0.5, 1, 2]
-interface Prefill { pair?: string; direction?: Direction; entry?: number; stop?: number; takeProfit?: number | null; setup?: string; timeframe?: string }
+interface Prefill { from?: string; pair?: string; direction?: Direction; entry?: number; stop?: number; takeProfit?: number | null; setup?: string; timeframe?: string }
 export function RiskPage() {
   const { settings, setSettings, tickerOf } = useApp()
-  const pre = useMemo(() => readJson<Prefill | null>('scalprx.prefill', null), [])
+  const [pre] = useState(() => readJson<Prefill | null>('scalprx.prefill', null))
   useEffect(() => { if (pre) localStorage.removeItem('scalprx.prefill') }, [pre])
   const [dir, setDir] = useState<Direction>(pre?.direction ?? 'long')
   const [equity, setEquity] = useState(String(settings.accountEquity))
@@ -23,7 +23,7 @@ export function RiskPage() {
   const [fee, setFee] = useState(String(settings.feePct))
   const [lev, setLev] = useState(String(settings.leverage))
   const [mmr, setMmr] = useState(String(settings.maintenanceMarginPct))
-  const [touched, setTouched] = useState(false)
+  const [touched, setTouched] = useState(Boolean(pre))
   const pair = pre?.pair ?? settings.chartPair
   const live = tickerOf(pair)
   const num = (s: string) => (s.trim() === '' ? NaN : Number(s))
@@ -38,6 +38,7 @@ export function RiskPage() {
   return (
     <div className="page">
       <div className="page-head"><div><h1>Risk calculator</h1><p>Position size from the risk you choose. Linear contracts only (spot or USDT-margined). Not for inverse contracts.</p></div></div>
+      {pre && <Banner tone="info"><span>Pre-filled from {pre.from ?? 'another tool'}: {pre.pair?.replace('USDT', '/USDT')} {pre.direction}, entry {pre.entry != null ? +pre.entry.toPrecision(8) : '-'}, stop {pre.stop != null ? +pre.stop.toPrecision(8) : '-'}. Review and adjust before using.</span></Banner>}
       <div className="grid g2" style={{ alignItems: 'start' }}>
         <Card title="Inputs">
           <div className="stack">

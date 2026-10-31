@@ -42,3 +42,54 @@ describe('UI smoke tests (network failing, as when offline)', () => {
     expect(await db.trades.count()).toBe(0)
   })
 })
+
+import { DataPage } from '../src/features/settings/DataPage'
+import { AnalyticsPage } from '../src/components/analytics/AnalyticsPage'
+import { ToastProvider } from '../src/app/toast'
+import { exportBackup } from '../src/services/storage/db'
+
+const wrap = (ui: React.ReactElement) => render(<AppProvider><ToastProvider>{ui}</ToastProvider></AppProvider>)
+const trade = { id: 'dp1', pair: 'BTCUSDT', direction: 'long' as const, entry: 100, exit: 105, stop: 95, takeProfit: null, size: 1, fees: 0, openedAt: 1, closedAt: 2, setup: '', timeframe: '5m', rationale: '', emotion: '', executionQuality: 3, mistakes: [], preNotes: '', postNotes: '', createdAt: 0 }
+
+describe('Data page', () => {
+  it('renders export, restore and reset controls', async () => {
+    wrap(<DataPage />)
+    expect(await screen.findByText(/Download full backup/)).toBeTruthy()
+    expect(screen.getByText(/Export journal \(CSV\)/)).toBeTruthy()
+    expect(screen.getByText(/Choose backup file/)).toBeTruthy()
+    expect(screen.getByText(/Reset everything/)).toBeTruthy()
+  })
+  it('exports a backup and shows a toast', async () => {
+    await db.trades.put(trade)
+    const create = vi.fn(() => 'blob:x')
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: create, revokeObjectURL: vi.fn() }))
+    wrap(<DataPage />)
+    fireEvent.click(await screen.findByText(/Download full backup/))
+    await waitFor(() => expect(create).toHaveBeenCalled())
+    expect(await screen.findAllByText(/Backup exported: 1 trades/)).toBeTruthy()
+  })
+  it('restores a valid backup file and rejects an invalid one', async () => {
+    await db.trades.put(trade)
+    const good = await exportBackup({ theme: 'light', refreshSec: 30 }, ['BTCUSDT', 'ETHUSDT'])
+    await db.trades.clear()
+    wrap(<DataPage />)
+    const input = (await screen.findByLabelText('Choose backup file')) as HTMLInputElement
+    const mk = (obj: unknown) => { const f = new File([JSON.stringify(obj)], 'b.json', { type: 'application/json' }); Object.defineProperty(f, 'text', { value: () => Promise.resolve(JSON.stringify(obj)) }); return f }
+    fireEvent.change(input, { target: { files: [mk({ app: 'nope' })] } })
+    expect(await screen.findAllByText(/not a ScalprX backup/)).toBeTruthy()
+    expect(await db.trades.count()).toBe(0)
+    fireEvent.change(input, { target: { files: [mk(good)] } })
+    await waitFor(async () => expect(await db.trades.count()).toBe(1))
+    expect(JSON.parse(localStorage.getItem('scalprx.settings.v1') ?? '{}').refreshSec).toBe(30)
+  })
+})
+
+describe('Sample preview', () => {
+  it('shows sample metrics without writing to the database', async () => {
+    wrap(<AnalyticsPage />)
+    fireEvent.click(await screen.findByText('Preview with sample data'))
+    expect(await screen.findByText(/previewing generated sample records/)).toBeTruthy()
+    expect(await screen.findByText('R-multiple distribution')).toBeTruthy()
+    expect(await db.trades.count()).toBe(0)
+  })
+})

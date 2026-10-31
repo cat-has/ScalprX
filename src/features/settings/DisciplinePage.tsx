@@ -6,10 +6,12 @@ import { dayKey, fmtMoney } from '../../lib/format'
 import { db } from '../../services/storage/db'
 import { useLocalStorage } from '../../hooks/useLocalStorage'
 import { useNow } from '../../hooks/useNow'
+import { useToast } from '../../app/toast'
 
 export function DisciplinePage() {
   const { settings, setSettings, trades } = useApp()
   const now = useNow(30000)
+  const toast = useToast()
   const r = settings.discipline
   const today = dayKey(now)
   const status = useMemo(() => evaluateDiscipline(trades, r, settings.accountEquity, now), [trades, r, settings.accountEquity, now])
@@ -54,18 +56,20 @@ export function DisciplinePage() {
       <div className="grid g2" style={{ alignItems: 'start' }}>
         <Card title="Pre-trade checklist" actions={<button className="btn sm" onClick={() => setChecks({ ...day, pre: [] })}>Reset today</button>}>
           {pre.map((i) => <label key={i} className="cond" style={{ cursor: 'pointer' }}><input type="checkbox" checked={day.pre.includes(i)} onChange={() => toggle('pre', i)} /> <span>{i}</span></label>)}
-          <p className="faint" style={{ marginTop: 8 }}>{day.pre.length} of {pre.length} confirmed.</p>
+          <div className="sbar lg" role="progressbar" aria-label="Pre-trade checklist progress" aria-valuemin={0} aria-valuemax={pre.length} aria-valuenow={day.pre.length} style={{ marginTop: 8 }}><i style={{ width: `${pre.length ? (day.pre.length / pre.length) * 100 : 0}%`, background: day.pre.length === pre.length && pre.length > 0 ? 'var(--up)' : 'var(--accent)' }} /></div>
+          <p className="faint" style={{ marginTop: 4 }}>{day.pre.length} of {pre.length} confirmed{day.pre.length === pre.length && pre.length > 0 ? ' - ready to trade your plan' : ''}.</p>
           <div className="row"><input aria-label="Add checklist item" placeholder="Add your own item" value={newPre} onChange={(e) => setNewPre(e.target.value)} /><button className="btn" onClick={() => { if (newPre.trim()) { setPre([...pre, newPre.trim()]); setNewPre('') } }}>Add</button><button className="btn ghost" onClick={() => setPre(DEFAULT_PRE)}>Restore defaults</button></div>
         </Card>
         <Card title="Post-trade review" actions={<button className="btn sm" onClick={() => setChecks({ ...day, post: [] })}>Reset today</button>}>
           {post.map((i) => <label key={i} className="cond" style={{ cursor: 'pointer' }}><input type="checkbox" checked={day.post.includes(i)} onChange={() => toggle('post', i)} /> <span>{i}</span></label>)}
-          <p className="faint" style={{ marginTop: 8 }}>{day.post.length} of {post.length} done.</p>
+          <div className="sbar lg" role="progressbar" aria-label="Post-trade review progress" aria-valuemin={0} aria-valuemax={post.length} aria-valuenow={day.post.length} style={{ marginTop: 8 }}><i style={{ width: `${post.length ? (day.post.length / post.length) * 100 : 0}%`, background: day.post.length === post.length && post.length > 0 ? 'var(--up)' : 'var(--accent)' }} /></div>
+          <p className="faint" style={{ marginTop: 4 }}>{day.post.length} of {post.length} done.</p>
           <button className="btn ghost" onClick={() => setPost(DEFAULT_POST)}>Restore defaults</button>
         </Card>
       </div>
       <Card title={`Session notes - ${today}`}>
         <textarea aria-label="Session notes" value={note} onChange={(e) => { setNote(e.target.value); setSaved(false) }} placeholder="How was your focus? What went well? What will you change tomorrow?" style={{ minHeight: 110 }} />
-        <div className="row" style={{ marginTop: 8 }}><button className="btn primary" onClick={() => void db.notes.put({ date: today, text: note }).then(() => setSaved(true))}>Save notes</button>{saved && <span className="up" role="status">Saved</span>}</div>
+        <div className="row" style={{ marginTop: 8 }}><button className="btn primary" onClick={() => void db.notes.put({ date: today, text: note }).then(() => { setSaved(true); toast('Session notes saved.') })}>Save notes</button>{saved && <span className="up" role="status">Saved</span>}</div>
       </Card>
     </div>
   )

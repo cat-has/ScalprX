@@ -73,3 +73,15 @@ export function Disclaimer() {
 export function Check({ ok }: { ok: boolean }) {
   return <span className={ok ? 'up' : 'down'} aria-label={ok ? 'met' : 'not met'}>{ok ? '✓' : '✗'}</span>
 }
+
+export function DemoBanner({ onExit }: { onExit: () => void }) {
+  return (
+    <div className="banner warn" role="status">
+      <div style={{ flex: 1 }}><span className="badge demo">Sample data</span> <strong>You are previewing generated sample records.</strong> They are not your trades, are read-only, are never saved or exported, and do not affect Dashboard or Discipline.</div>
+      <button className="btn sm" onClick={onExit}>Exit preview</button>
+    </div>
+  )
+}
+export function SampleButton({ onClick }: { onClick: () => void }) {
+  return <button className="btn" onClick={onClick}>Preview with sample data</button>
+}
