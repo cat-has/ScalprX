@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { RefreshCw, SlidersHorizontal } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { RefreshCw, SlidersHorizontal, Volume2, VolumeX } from 'lucide-react'
 import { useApp } from '../../app/store'
 import { useScanner } from '../../hooks/useScanner'
 import { SetupCard } from '../../components/scanner/SetupCard'
@@ -7,7 +7,41 @@ import { Banner, Card, Disclaimer, Empty, Field, Seg } from '../../components/ui
 import { TIMEFRAMES, type Timeframe } from '../../types'
 import { useNow } from '../../hooks/useNow'
 import { FeedBanner } from '../../components/layout/FeedBanner'
-import { fmtAge } from '../../lib/format'
+import { fmtAge, prettyPair } from '../../lib/format'
+import { readJson, writeJson } from '../../hooks/useLocalStorage'
+import { useToast } from '../../app/toast'
+import type { Setup } from '../../lib/scanner'
+
+/** Soft two-note chime synthesised with the Web Audio API (no audio files). */
+export function playChime(ctx: AudioContext): void {
+  const t = ctx.currentTime
+  const master = ctx.createGain()
+  master.gain.value = 0.9
+  master.connect(ctx.destination)
+  ;([[880, 0], [1318.51, 0.13]] as const).forEach(([freq, dt]) => {
+    const o = ctx.createOscillator()
+    const g = ctx.createGain()
+    o.type = 'sine'
+    o.frequency.value = freq
+    g.gain.setValueAtTime(0.0001, t + dt)
+    g.gain.exponentialRampToValueAtTime(0.1, t + dt + 0.02)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.75)
+    o.connect(g).connect(master)
+    o.start(t + dt)
+    o.stop(t + dt + 0.8)
+  })
+}
+/** Keys of setups with 5+ of 6 conditions on either side (pair|timeframe|side). */
+export function qualifyingKeys(setups: Setup[]): Map<string, { pair: string; side: 'long' | 'short'; score: number }> {
+  const out = new Map<string, { pair: string; side: 'long' | 'short'; score: number }>()
+  for (const s of setups) {
+    for (const side of ['long', 'short'] as const) {
+      const sc = s[side]?.score ?? 0
+      if (sc >= 5) out.set(`${s.pair}|${s.timeframe}|${side}`, { pair: s.pair, side, score: sc })
+    }
+  }
+  return out
+}
 
 type Filter = 'all' | 'bullish' | 'bearish' | 'neutral' | 'insufficient'
 export function ScannerPage() {
@@ -15,9 +49,52 @@ export function ScannerPage() {
   const [filter, setFilter] = useState<Filter>('all')
   const [cfgOpen, setCfgOpen] = useState(false)
   const now = useNow(5000)
+  const toast = useToast()
+  const [soundOn, setSoundOn] = useState<boolean>(() => readJson<boolean>('scalprx.scanner.sound', false))
+  const audio = useRef<AudioContext | null>(null)
+  const seen = useRef<Map<string, unknown> | null>(null)
+  const seenTf = useRef(settings.scanner.timeframe)
+  const getCtx = useCallback((): AudioContext | null => {
+    try {
+      const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!Ctor) return null
+      audio.current ??= new Ctor()
+      if (audio.current.state === 'suspended') void audio.current.resume()
+      return audio.current
+    } catch { return null }
+  }, [])
+  // Browsers only start audio after a user gesture; if sound was left on, unlock it on the first interaction.
+  useEffect(() => {
+    if (!soundOn) return
+    const unlock = () => { getCtx() }
+    window.addEventListener('pointerdown', unlock, { once: true })
+    window.addEventListener('keydown', unlock, { once: true })
+    return () => { window.removeEventListener('pointerdown', unlock); window.removeEventListener('keydown', unlock) }
+  }, [soundOn, getCtx])
+  useEffect(() => () => { void audio.current?.close(); audio.current = null }, [])
+  const toggleSound = () => {
+    const next = !soundOn
+    setSoundOn(next)
+    writeJson('scalprx.scanner.sound', next)
+    if (next) { const c = getCtx(); if (c) playChime(c); else toast('This browser does not support audio alerts.', 'error') }
+  }
   const cfg = settings.scanner
   const spreads = useMemo(() => Object.fromEntries(feed.tickers.map((t) => [t.symbol, t.spreadPct])), [feed.tickers])
   const scan = useScanner(watchlist, cfg.timeframe, settings.indicators, cfg, spreads, Math.max(30, settings.refreshSec * 3))
+  // Chime when a pair NEWLY reaches 5/6 or 6/6. The first scan (and a timeframe change) only sets the baseline, so opening the page is silent.
+  useEffect(() => {
+    if (!scan.finishedAt) return
+    const current = qualifyingKeys(scan.setups)
+    if (seenTf.current !== cfg.timeframe) { seenTf.current = cfg.timeframe; seen.current = null }
+    const prev = seen.current
+    seen.current = current
+    if (!prev) return
+    const fresh = [...current.entries()].filter(([k]) => !prev.has(k)).map(([, v]) => v)
+    if (!fresh.length) return
+    toast(`Scanner: ${fresh.map((f) => `${prettyPair(f.pair)} ${f.side} ${f.score}/6`).join(', ')}`, 'info')
+    if (soundOn) { const c = getCtx(); if (c) playChime(c) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scan.finishedAt])
   const shown = scan.setups.filter((s) => filter === 'all' || s.bias === filter)
   const order = { bullish: 0, bearish: 1, neutral: 2, insufficient: 3 }
   shown.sort((a, b) => order[a.bias] - order[b.bias])
@@ -32,6 +109,7 @@ export function ScannerPage() {
           <Seg<Timeframe> label="Scanner timeframe" value={cfg.timeframe} options={TIMEFRAMES.map((x) => ({ v: x, label: x }))} onChange={(v) => setC({ timeframe: v })} />
           <button className="btn" onClick={() => setCfgOpen(!cfgOpen)} aria-expanded={cfgOpen}><SlidersHorizontal size={16} /> Configure</button>
           <button className="btn" onClick={scan.scanNow} disabled={scan.scanning}><RefreshCw size={16} /> {scan.scanning ? 'Scanning' : 'Scan now'}</button>
+          <button className="btn" onClick={toggleSound} aria-pressed={soundOn} title={soundOn ? 'Chime on when a pair reaches 5/6 or 6/6 conditions' : 'Sound alerts are muted'}>{soundOn ? <Volume2 size={16} /> : <VolumeX size={16} />} {soundOn ? 'Mute' : 'Unmute'}</button>
         </div>
       </div>
       <Banner tone="info"><span>These are rule-based, educational setups, not trade signals or advice. Indicators describe the past and do not guarantee outcomes.</span></Banner>
